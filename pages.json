@@ -34,16 +34,6 @@
 		{
 			"path": "pages/tabbar-3-detial/tabbar-3-qa/tabbar-3-qa",
 			"style": {}
-		},{
-		    "path": "pages/login/login",
-		    "style": {}
-		}
-		, {
-		    "path": "pages/login/forget",
-		    "style": {}
-		}, {
-		    "path": "pages/login/register",
-		    "style": {}
 		}
 	],
 	"globalStyle": {
