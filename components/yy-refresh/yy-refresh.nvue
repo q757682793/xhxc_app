@@ -1,0 +1,80 @@
+<template>
+	<refresh id="refresh" @refresh="onRefresh" @pullingdown="onPullingDown" :style="{width:screenWidth}" class="refresh-div"
+	 :display="refreshing ? 'show' : 'hide'">
+		<image :src="loadingIcon[refreshStatus]" class="loading-icon"></image>
+		<text class="refresh-div-text">{{ refreshText[refreshStatus] }}</text>
+	</refresh>
+</template>
+
+<script>
+	export default {
+		props: {
+			refreshText: {
+				type: Array,
+				default: ['下拉加载更多历史消息', '释放加载更多历史消息', '加载中...', '','到顶啦~']
+			}
+		},
+		data() {
+			return {
+				refreshStatus: 0,
+				refreshing: false,
+				screenWidth: 750,
+				loadingIcon: [
+					'/static/yy-refresh/arrow-down.png',
+					'/static/yy-refresh/arrow-up.png',
+					'/static/yy-refresh/loading.gif',
+					'',
+					''
+				]
+			};
+		},
+		created() {
+			this.screenWidth = uni.getSystemInfoSync().windowWidth;
+		},
+		watch: {
+			refreshStatus(newValue) {
+				this.refreshing = newValue == 2
+			}
+		},
+		methods: {
+			onPullingDown(event) {
+				var refreshHeight = event.viewHeight;
+				var pullingDistance = event.pullingDistance;
+				this.refreshStatus = refreshHeight < pullingDistance ? 1 : 0;
+			},
+			onRefresh() {
+				this.refreshStatus = 2;
+				this.$emit('refresh');
+			},
+			finish() {
+				this.refreshStatus = 3;
+			},
+			stop(){
+				this.refreshText[3]="到顶啦~"
+			}
+		}
+	};
+</script>
+
+<style>
+	.refresh-div {
+		padding-right: 50upx;
+		height: 60px;
+		flex-direction: row;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.loading-icon {
+		width: 16px;
+		height: 16px;
+	}
+
+	.refresh-div-text {
+		font-size: 14px;
+		color: #999;
+		line-height: 60px;
+		text-align: center;
+		margin-left: 5px;
+	}
+</style>
