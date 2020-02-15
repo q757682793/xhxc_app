@@ -67,7 +67,7 @@
 				}).onSuccess(function(data) {	
 					uni.hideLoading()
 					uni.switchTab({
-						url:"pages/tabbar/tabbar-2/tabbar-2"
+						url:"pages/tabbar/chat/chat"
 					})
 				}).onFail(function(data) {
 					uni.hideLoading()

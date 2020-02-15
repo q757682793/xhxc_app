@@ -230,7 +230,7 @@
 				})
 				var Timer = setTimeout(function(){
 					uni.switchTab({
-						url:"/pages/tabbar/tabbar-2/tabbar-2"
+						url:"/pages/tabbar/chat/chat"
 					})
 					clearTimeout(Timer)
 				},1000)
