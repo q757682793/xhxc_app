@@ -1,0 +1,741 @@
+<template>
+	<view>
+		<!-- 聊天内容区域 -->
+		<scroll-view id="chatBody" scroll-y class="bg-light position-fixed left-0 right-0 px-3" :style="chatBodyBottom" :show-scrollbar="false"
+		@click="clickPage" :scroll-into-view="viewId">
+			
+			<!-- 聊天信息列表组件 -->
+			<list :show-scrollbar="false">
+				<yy-refresh :refresh-text="refreshText" @refresh="onRefresh" ref="yyRefresh"></yy-refresh>
+				<cell v-for="(item,index) in list" :key="item.msg_id" :id="'id'+item.create_time">
+					<free-chat-item :item="item" :avatar="item.avatar" :myUsername="myUsername" :myAvatar="myAvatar" :index="index" ref="chatItem"
+					:pretime=" index > 0 ? list[index-1].create_time : 0"
+					@long="long" @preview="previewImage"></free-chat-item>
+				</cell>
+			</list>
+		</scroll-view>
+		
+		<!-- 底部输入框 -->
+		<view class="position-fixed left-0 right-0 bottom-0 border-top flex align-center" style="background-color: #F7F7F6;height: 105rpx;" :style="getInputStyle">
+			<view v-if="mode=='audio'" class="flex align-center justify-center" @click="changeVoiceOrText"
+			style="height: 90rpx;width: 90rpx;">
+				<text class="iconfont font-vg">&#xe604;</text>
+			</view>
+			<view v-else class="flex align-center justify-center" @click="changeVoiceOrText"
+			style="height: 90rpx;width: 90rpx;">
+				<text class="iconfont font-vg" >&#xe644;</text>
+			</view>
+			<view class="flex-1">
+				<view v-if="mode === 'audio'" class="rounded flex align-center justify-center" style="height: 80rpx;" :class="isRecording?'bg-hover-light':'bg-white'" @touchstart="voiceTouchStart" @touchend="voiceTouchEnd" @touchcancel="voiceTouchCancel" @touchmove="voiceTouchMove">
+					<text class="font">{{isRecording ? '松开 结束':'按住 说话'}}</text>
+				</view>
+				
+				<input cursor-spacing="15"  v-else fixed class="bg-white rounded p-2 mr-1 font-md" style="height: 80rpx;" v-model="text" @focus="mode = 'text'"/>
+			</view>
+			<!-- 表情 -->
+			<!-- <free-icon-button iconClass="font-vg" :icon="'\ue60d'"
+			@click="openActionOrEmoticon('emoticon')"></free-icon-button> -->
+			<template v-if="text.length === 0">
+				<!-- 扩展菜单 -->
+				<free-icon-button iconClass="font-vg" :icon="'\ue647'" 
+				@click="openActionOrEmoticon('action')"></free-icon-button>
+			</template>
+			<template v-else>
+				<!-- 发送按钮 -->
+				<free-main-button name="发送" 
+				@click="send('text')"></free-main-button>
+			</template>
+			
+		</view>
+		
+		<!-- 扩展菜单 -->
+		<free-popup ref="action" bottom transformOrigin="center bottom"  :mask="false">
+			<view style="height: 200rpx;" class="border-top border-light-secondary bg-light">
+				<swiper :indicator-dots="emoticonOrActionList.length > 1" style="height: 200rpx;">
+					<swiper-item class="row" 
+					v-for="(item,index) in emoticonOrActionList"
+					:key="index">
+						<view class="col-3 flex flex-column align-center justify-center" style="height: 200rpx;" v-for="(item2,index2) in item" :key="index2" @click="actionEvent(item2)">
+							<text class="iconfont" style="font-size: 90rpx;">{{item2.icon}}</text>
+							<text class="font-sm text-muted mt-2"
+							>{{item2.name}}</text>
+						</view>
+					</swiper-item>
+				</swiper>
+			</view>
+		</free-popup>
+		
+		
+		<!-- 弹出层 -->
+		<free-popup ref="extend" :bodyWidth="240" :bodyHeight="getMenusHeight"
+		:tabbarHeight="105">
+			<view class="flex flex-column" 
+			style="width: 240rpx;"
+			:style="getMenusStyle">
+				<view class="flex-1 flex align-center" 
+				v-for="(item,index) in menus"
+				:key="index"
+				@click="clickEvent(item.event)">
+					<text class="font-md pl-3">{{item.name}}</text>
+				</view>
+			</view>
+		</free-popup>
+		
+		
+		<!-- 录音提示 -->
+		<view v-if="isRecording" class="position-fixed top-0 left-0 right-0 flex align-center justify-center" style="bottom: 105rpx;">
+			<view style="width: 360rpx;height: 360rpx;background-color: rgba(0,0,0,0.5);" class="rounded flex flex-column align-center justify-center">
+				<image src="/static/audio/recording.gif" style="width: 150rpx;height: 150rpx;"></image>
+				<text class="font text-white mt-3">{{unRecord ? '松开手指，取消发送':'手指上滑，取消发送'}}</text>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script>
+	import freeIconButton from "@/components/free-ui/free-icon-button.vue"
+	import freeChatItem from '@/components/free-ui/free-chat-item.vue';
+	import freePopup from "@/components/free-ui/free-popup.vue"
+	import freeMainButton from '@/components/free-ui/free-main-button.vue';
+	import getCodeMsg from "@/js_sdk/ErrorCode.js"
+	import { mapState,mapMutations } from 'vuex'
+	
+	
+	var _this;
+	var JIM = getApp().globalData.JIM;
+	export default {
+		components: {
+			freeIconButton,
+			freeChatItem,
+			freePopup,
+			freeMainButton
+		},
+		data() {
+			return {
+				// 模式 text输入文字，action操作，audio音频
+				mode:"text",
+				tempurl:"",
+				username:"",
+				nickname:"",
+				avatar:"/static/images/userpic.jpg",
+				myUsername:"",
+				myName:"",
+				myAvatar:"/static/images/userpic.jpg",
+				// 扩展菜单列表
+				actionList:[
+					[{
+						name:"相册",
+						icon:"\ue603",
+						event:"uploadImage"
+					},{
+						name:"位置",
+						icon:"\ue699",
+						event:"sendLocation"
+					}]
+				],
+				// 键盘高度
+				KeyboardHeight:0,
+				menus:[{ 
+					name:"复制",
+					event:'copy',
+				}],
+				list:[],//聊天页面list
+				tmpList:[],//临时总的list 用于分页splice
+				totalList:[], //总的list
+				// 当前操作的气泡索引
+				propIndex:-1,
+				// 输入文字
+				text:"",
+				last_text:"",
+				
+				// 音频录制状态
+				isRecording:false,
+				RecordingStartY:0,
+				// 取消录音
+				unRecord:false,
+				
+				//位置
+				title:"",
+				address:"",
+				longitude: 116.39782706452439,
+				latitude:39.90374012232956,
+				scale:16,
+				sendLocationFlag:false ,//是否需要发送位置
+				
+				viewId:''
+			}
+		},
+		onLoad:function(e){
+			_this=this;
+			_this.username = e.username;
+			_this.nickname = e.nickname;
+			uni.setNavigationBarTitle({
+				'title':_this.nickname
+			})
+			var userData = uni.getStorageSync("userData");
+			_this.myName=userData.name;
+			_this.myUsername = userData.username;
+			
+			
+			var msg = uni.getStorageSync(_this.myUsername+_this.username)||[];
+			if(msg.length>0){
+				_this.tmpList=msg.concat();
+				_this.totalList=msg.concat();
+				
+				if(e.index){
+					_this.list = _this.tmpList.splice(e.index);	
+				}else{
+					if(msg.length>20){
+						_this.list = _this.tmpList.splice(_this.tmpList.length-20,20);	
+					}else{
+						_this.list =  _this.tmpList.splice(0,msg.length);
+					}
+				}
+				
+				// var pageToBottomTimer = setTimeout(()=>{
+				// 	_this.pageToBottom()
+				// 	clearTimeout(pageToBottomTimer)
+				// },500)
+			}
+			
+			uni.$on("get_chat_msg",function(){
+				// console.log("===================有新消息来啦=====================")
+				var msg = uni.getStorageSync(_this.myUsername+_this.username);
+				console.log(msg.length)
+				_this.totalList=msg.concat();
+				_this.tmpList=msg.concat();
+				if(msg.length>20){
+					_this.list = _this.tmpList.splice(_this.tmpList.length-20,20);	
+				}else{
+					_this.list = _this.tmpList.splice(0,msg.length);
+				}
+				var pageToBottomTimer = setTimeout(()=>{
+					_this.pageToBottom()
+					clearTimeout(pageToBottomTimer)
+				},200)
+			})
+			if(!e.index){
+				_this.pageToBottom();
+			}
+		},
+		onUnload(){
+			uni.$off("get_chat_msg")
+		},
+		onShow(){			
+			if(!JIM.isLogin()){
+				uni.showToast({
+					"title":"已离线,重登中",
+					"position":"bottom",
+					"icon":"none"
+				})
+				var Timer = setTimeout(function(){
+					uni.switchTab({
+						url:"/pages/tabbar/tabbar-2/tabbar-2"
+					})
+					clearTimeout(Timer)
+				},1000)
+				return;
+			}
+			
+			_this=this
+		
+			
+			if(this.title&&this.sendLocationFlag){
+				
+				JIM.sendSingleLocation({
+					'target_username' : _this.username,		
+					'latitude' : _this.latitude,
+					'longitude' : _this.longitude,
+					'scale' : _this.scale,
+					'label' : _this.address,			
+					'extras':{
+						'title':_this.title,
+						'del':false,
+					}
+				}).onSuccess(function(res , msg) {
+					var obj = {
+						"from_id": _this.myUsername,
+						"create_time": (new Date()).getTime(),				
+						"msg_type": "location",
+						"target_id": _this.username,
+						"msg_id":res.msg_id,
+						"msg_body":{
+							"latitude": _this.latitude,
+							"scale": _this.scale,
+							"extras": {
+								"title": _this.title,
+								'del':false,
+							},
+							"label": _this.address,
+							"longitude":_this.longitude
+						}
+					}
+					_this.sendLocationFlag=false
+					
+					_this.list.push(obj)
+					_this.totalList.push(obj)
+					
+					// 置于底部
+					var pageToBottomTimer = setTimeout(()=>{
+						_this.pageToBottom()
+						clearTimeout(pageToBottomTimer)
+					},200)
+					
+					JIM.updateConversation({
+					   'username' : _this.username,
+					   'extras' : {'latest_msg':"[位置]"+_this.title}
+					});
+					
+					uni.setStorageSync(_this.myUsername+_this.username,_this.totalList);
+					
+				}).onFail(function(data) {
+					uni.showToast({
+						"title":getCodeMsg(data.code),
+						"position":"bottom",
+						"icon":"none"
+					})
+				});
+			}
+		
+			JIM.resetUnreadCount({
+				'username' : _this.username
+			});
+			uni.hideTabBarRedDot({
+				index:1
+			});
+		},
+		mounted() {
+			// 监听键盘高度变化
+			uni.onKeyboardHeightChange(res => {
+			  if (this.mode !== 'action' && this.mode !== 'emoticon') {
+				this.KeyboardHeight = res.height 
+			  }
+			})
+			// 注册发送音频事件
+			this.regSendVoiceEvent((url)=>{
+				if (!this.unRecord) {
+					this.send('audio',url,{
+						time:this.RecordTime
+					})
+				}
+			})
+		},
+		computed: {
+			...mapState({
+				RECORD:state=>state.audio.RECORD,
+				RecordTime:state=>state.audio.RecordTime
+			}),
+			//动态改变输入框样式
+			getInputStyle(){
+				if(this.KeyboardHeight==uni.upx2px(200)){
+					return 'bottom:'+this.KeyboardHeight+'px';
+				}else if(this.KeyboardHeight==0){
+					return 'bottom:0px'
+				}
+			},
+			// 动态获取菜单高度
+			getMenusHeight(){
+				let H = 100
+				return this.menus.length * H
+			},
+			// 获取菜单的样式
+			getMenusStyle(){
+				return `height: ${this.getMenusHeight}rpx;`
+			},
+			// 判断是否操作本人信息
+			isdoSelf(){
+				let target_id = _this.propIndex > -1 ? _this.list[_this.propIndex].target_id : 0
+				return target_id !== _this.myUsername
+			},
+			// 聊天区域bottom
+			chatBodyBottom(){
+				if(this.KeyboardHeight==uni.upx2px(200)){
+					return 'bottom:'+(this.KeyboardHeight+uni.upx2px(105))+'px;top:0px';
+				}else{
+					return `bottom:${uni.upx2px(105)}px;top:0px;`
+				}
+			},
+			// 获取操作或者表情列表
+			emoticonOrActionList(){
+				return (this.mode === 'emoticon' || this.mode === 'action') ? this[this.mode+'List'] : []
+			}
+		},
+		watch: {
+			mode(newValue, oldValue) {
+				if (newValue !== 'action' && newValue !== 'emoticon') {
+					this.$refs.action.hide()
+				}
+				if (newValue !== 'text') {
+					uni.hideKeyboard()
+				}
+			}
+		},
+		methods: {
+			...mapMutations(['regSendVoiceEvent']),
+
+			setPic(media_id,index){
+				JIM.getResource({'media_id' :media_id}).onSuccess(function(data){
+					uni.downloadFile({
+						url: data.url,
+						success: (res) => {
+							if (res.statusCode === 200) {	
+								uni.saveFile({
+									tempFilePath: res.tempFilePath,
+									success: function (res) {
+										_this.$data.totalList[index].msg_body.media_id=res.savedFilePath;
+										uni.setStorageSync(_this.myUsername+_this.username,_this.$data.totalList);									
+									}
+								});
+							}
+						}
+					}); 
+				}).onFail(function(data){
+					uni.showToast({
+						"title":getCodeMsg(data.code),
+						"position":"bottom",
+						"icon":"none"
+					})
+				});		
+			},
+			// 打开扩展菜单或者表情包
+			openActionOrEmoticon(mode = 'action'){
+				this.mode = mode
+				this.$refs.action.show()
+				
+				uni.hideKeyboard()
+				this.KeyboardHeight = uni.upx2px(200)
+				// 置于底部
+				var pageToBottomTimer = setTimeout(()=>{
+					_this.pageToBottom()
+					clearTimeout(pageToBottomTimer)
+				},200)
+			},
+			// 发送
+			send(type, data = '',options = {}){
+				var _that = this;
+				var text = this.text
+				var latest_msg;
+				
+				if(type=="image"||type=="audio"){
+					uni.saveFile({
+						tempFilePath: data,
+						success: function (res) {
+							var saveFile = res.savedFilePath;
+							console.log(saveFile)
+							console.log(type+"====="+data)
+							switch (type){								
+								case 'image':
+								uni.showLoading({
+									"title":"发送中请稍候..."
+								})
+								latest_msg = "[图片]";
+								
+								JIM.sendSinglePic({
+									'target_username' : _this.username,
+									'image' : saveFile, //设置图片参数
+									"extras": {
+										'del':false,
+									},
+								}).onSuccess(function(res,msg) {
+									
+									var obj = {
+										"from_id": _this.myUsername,
+										"create_time": (new Date()).getTime(),				
+										"msg_type": type,
+										"target_id": _this.username,
+										"msg_id":res.msg_id,
+										"msg_body":{
+											"media_id": saveFile,
+											"extras": {
+												'del':false,
+											},
+										}
+									}
+									_this.list.push(obj)
+									_this.totalList.push(obj)
+									uni.hideLoading()
+									// 置于底部
+									var pageToBottomTimer = setTimeout(()=>{
+										_this.pageToBottom()
+										clearTimeout(pageToBottomTimer)
+									},200)
+									
+									JIM.updateConversation({
+									   'username' : _this.username,
+									   'extras' : {'latest_msg':latest_msg}
+									});
+									
+									uni.setStorageSync(_this.myUsername+_this.username,_this.totalList);
+								}).onFail(function(data) {
+									console.log(data)
+									uni.hideLoading()
+									uni.showToast({
+										"title":"暂支持JPG格式",
+										"position":"bottom",
+										"icon":"none"
+									})
+								});
+									break;		
+											
+								case 'audio':
+								if(options.time<=1){
+									uni.showToast({
+										title:"说话时间太短啦",
+										icon:"none",
+										"icon":"none"
+									})
+									break;
+								}
+								latest_msg = "[语音]";
+								JIM.sendSingleFile({
+									'target_username' : _this.username,
+									'file' : saveFile ,//设置图片参数
+									'extras':{
+										'del':false,
+										'time':options.time,
+										'isAudio':true
+									}
+								}).onSuccess(function(res,msg) {
+									
+									var obj = {
+										"from_id": _this.myUsername,
+										"create_time": (new Date()).getTime(),				
+										"msg_type": "file",
+										"target_id": _this.username,
+										"msg_id":res.msg_id,
+										"msg_body":{		
+											"media_id":saveFile,
+											"extras": {
+												'del':false,
+												'time':options.time,
+												'isAudio':true
+											}
+										}
+									}
+									_this.list.push(obj)
+									_this.totalList.push(obj)
+									
+									// 置于底部
+									var pageToBottomTimer = setTimeout(()=>{
+										_this.pageToBottom()
+										clearTimeout(pageToBottomTimer)
+									},200)
+									
+									JIM.updateConversation({
+									   'username' : _this.username,
+									   'extras' : {'latest_msg':latest_msg}
+									});
+									
+									uni.setStorageSync(_this.myUsername+_this.username,_this.totalList);
+								}).onFail(function(data) {
+									uni.showToast({
+										"title":getCodeMsg(data.code),
+										"position":"bottom",
+										"icon":"none"
+									})
+								});
+									break;									
+							}
+						}
+					});
+				}else{
+					switch(type){
+						case 'text':
+						console.log(text)
+						latest_msg = text;
+						if(_this.last_text == text){
+							_that.text = ''
+							return;
+						}
+						_this.last_text = text;
+						console.log(_this.username)
+						JIM.sendSingleMsg({
+							'target_username' : _this.username,
+							'content' : text,
+							"extras": {
+								'del':false
+							},
+						}).onSuccess(function(data) {
+							var obj = {
+								"target_type":"single",
+								"from_name":_this.myName,
+								"from_id": _this.myUsername,
+								"create_time": (new Date()).getTime(),				
+								"msg_type": type,
+								"target_id": _this.username,
+								"target_name":_this.nickname,
+								"msg_id":data.msg_id,
+								"msg_body":{
+									"extras": {'del':false},
+									"text": text
+								}
+							}
+							_this.list.push(obj)
+							_this.totalList.push(obj)
+							console.log("push==============")
+							
+							// 发送文字成功，清空输入框
+							
+							_that.text = ''
+							_that.last_text = ''
+							// 置于底部
+							var pageToBottomTimer = setTimeout(()=>{
+								_this.pageToBottom()
+								clearTimeout(pageToBottomTimer)
+							},200)
+							
+							JIM.updateConversation({
+							   'username' : _this.username,
+							   'extras' : {'latest_msg':latest_msg}
+							});
+							
+							uni.setStorageSync(_this.myUsername+_this.username,_this.totalList);
+						
+						}).onFail(function(data) {
+							uni.showToast({
+								"title":getCodeMsg(data.code),
+								"position":"bottom",
+								"icon":"none"
+							})
+							//data.code 返回码
+							//data.message 描述
+						});
+							break;
+					}
+				}
+				
+			   
+			},
+			// 回到底部
+			pageToBottom(){
+				_this=this;
+				var len = _this.list.length;
+				_this.viewId = 'id'+_this.list[len-1].create_time;
+			},
+			// 长按消息气泡
+			long({x,y,index}){
+				// 初始化 索引
+				this.propIndex = index
+				if(_this.list[index].msg_type=="text"&&!_this.list[index].msg_body.extras.isEmotion){
+					// 显示扩展菜单
+					this.$refs.extend.show(x,y)
+				}
+			},
+			// 操作菜单方法分发
+			clickEvent(event,e){
+				switch (event){
+					case 'copy'://复制
+					if (this.propIndex > -1) {
+						uni.setClipboardData({
+						    data: this.list[this.propIndex].msg_body.text,
+						    success: function () {
+						        console.log('success');
+						    }
+						});
+					}
+						break;
+					case 'removeChatItem': // 撤回消息
+					// 拿到当前被操作的信息
+					if (this.propIndex > -1) {
+						this.list[this.propIndex].msg_body.extras.del = true
+					}
+						break;
+					case 'delete'://删除
+					if (this.propIndex > -1) {
+						this.list.splice(this.propIndex,1)
+					}
+						break;
+					default:
+						break;
+				}
+				// 关闭菜单
+				this.$refs.extend.hide()
+			},
+			// 扩展菜单
+			actionEvent(e){
+				switch (e.event){
+					case 'uploadImage': // 选择相册
+					wx.chooseImage({
+						count: 9, //
+						sizeType: ['compressed'], // 可以指定是原图还是压缩图，默认二者都有
+						sourceType: ['album', 'camera'], // 可以指定来源是相册还是相机，默认二者都有
+						success: function (res) {
+							res.tempFilePaths.forEach((item)=>{
+								_this.send('image',item)							
+							})
+						
+						}
+					})
+					// uni.chooseImage({
+					// 	count:9,
+					// 	sourceType:['album', 'camera'],
+					// 	sizeType:['compressed'],
+					// 	success: (res) => {
+					// 		// 发送到服务器
+					// 		// 渲染到页面
+					// 		res.tempFilePaths.forEach((item)=>{
+					// 			this.send('image',item)							
+					// 		})
+					// 	}
+					// })
+						break;
+					case 'sendLocation'://发送位置
+						uni.navigateTo({
+							url:"/pages/location/send-location/send-location"
+						})
+						break;
+				}
+			},
+			// 点击页面
+			clickPage(){
+				this.mode = ''
+				this.KeyboardHeight=0;
+			},
+			// 预览图片
+			previewImage(url){
+				uni.previewImage({
+					current:url,
+					urls:[url],
+					indicator:"default"
+				})
+			},
+			// 切换音频录制和文本输入
+			changeVoiceOrText(){
+				this.mode = this.mode !== 'audio' ? 'audio' : 'text'
+			},
+			// 录音相关
+			// 录音开始
+			voiceTouchStart(e){ 
+				// 初始化
+				this.isRecording = true
+				this.RecordingStartY = e.changedTouches[0].screenY
+				this.unRecord = false
+				// 开始录音
+				this.RECORD.start({
+					format:"mp3"
+				})
+			},
+			// 录音结束
+			voiceTouchEnd(){
+				this.isRecording = false
+				// 停止录音
+				this.RECORD.stop()
+			},
+			// 录音被打断
+			voiceTouchCancel(){
+				this.isRecording = false
+				this.unRecord = true
+				// 停止录音
+				this.RECORD.stop()
+			},
+			voiceTouchMove(e){
+				let Y = Math.abs(e.changedTouches[0].screenY - this.RecordingStartY)
+				this.unRecord = (Y >= 50)
+			}
+		}
+	}
+</script>
+
+<style>
+
+</style>

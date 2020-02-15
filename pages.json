@@ -35,7 +35,17 @@
 			"path": "pages/tabbar-3-detial/tabbar-3-qa/tabbar-3-qa",
 			"style": {}
 		}
-	],
+	    ,{
+            "path" : "pages/chat/chat",
+            "style" : {}
+        },{
+            "path" : "pages/location/send-location/send-location",
+            "style" : {
+            	"navigationBarTitleText" : "发送位置",
+            	"navigationBarBackgroundColor":"#EDEDED"
+            }
+        }
+    ],
 	"globalStyle": {
 		"navigationBarTextStyle": "black",
 		"navigationBarTitleText": "uni-app",

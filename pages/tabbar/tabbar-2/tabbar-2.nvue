@@ -1,0 +1,418 @@
+<template>
+	<view>
+		<view class="noConversation" v-if="list.length==0">
+			<view>
+				<text class="iconfont text-gray text-center" style="font-size: 200rpx;">&#xe661;</text>
+			</view>
+			<view>
+				<text class=" font-md text-gray text-center">暂无会话</text>
+			</view>
+		</view>
+		
+		<!-- 置顶列表 -->
+		<list>
+			<cell v-for="(item,index) in list" :key="index">
+				<free-media-list v-if="isTop(item.username)&&!item.extras.del" :item="item" :index="index"
+				@long="long"></free-media-list>
+			</cell>
+		</list>
+		
+		<!-- 非置顶列表 -->
+		<list>
+			<cell v-for="(item,index) in list" :key="index">
+				<free-media-list v-if="!isTop(item.username)&&!item.extras.del" :item="item" :index="index"
+				@long="long"></free-media-list>
+			</cell>
+		</list>
+		
+		<!-- 弹出层 -->
+		<free-popup ref="extend" :bodyWidth="240" :bodyHeight="getMenusHeight">
+			<view class="flex flex-column" 
+			style="width: 240rpx;"
+			:style="getMenusStyle">
+				<view class="flex-1 flex align-center" 
+				v-for="(item,index) in menus"
+				:key="index"
+				@click="clickEvent(item.event)">
+					<text class="font-md pl-3">{{item.name}}</text>
+				</view>
+			</view>
+		</free-popup>
+	</view>
+</template>
+
+<script>
+	import freeMediaList from "@/components/free-ui/free-media-list.vue"
+	import freePopup from "@/components/free-ui/free-popup.vue"
+	import getCodeMsg from "@/js_sdk/ErrorCode.js"
+	
+	var JIM=getApp().globalData.JIM;
+	var _this;
+	export default {
+		data() {
+			return {
+				propIndex:-1,
+				menus:[
+					{
+						name:"设为置顶",
+						event:"setTop"
+					},
+					{
+						name:"删除该聊天",
+						event:"delChat"
+					}
+				],
+				list:[],
+				myUsername:'',
+				userData:{},
+			};
+		},
+		components:{
+			freeMediaList,
+			freePopup
+		},
+		computed:{
+			// 动态获取菜单高度
+			getMenusHeight(){
+				let H = 100
+				return this.menus.length * H
+			},
+			// 获取菜单的样式
+			getMenusStyle(){
+				return `height: ${this.getMenusHeight}rpx;`
+			},
+			isTop(){
+				return function(username){
+					return uni.getStorageSync("isTop"+_this.myUsername+username)			
+				}
+			}
+		},
+		onLoad() {			
+			_this=this;
+			_this.userData = uni.getStorageSync("userData")
+			uni.$on("reInit",function(){
+				_this.login(_this.userData.username,_this.userData.password)
+			})
+		},
+		onUnload(){
+			uni.$off("reInit")
+		},
+		onShow() {
+			const value = _this.userData
+			_this.myUsername=value.username
+			if (value) {
+				console.log("已登录") //登录过 有缓存
+				console.log(value)
+				if(!JIM.isInit()){ //没有初始化
+					uni.showLoading({
+						title:"聊天系统初始化"
+					})
+					var appkey='1216e11bd597960fa1b95a0c';
+					var random_str="NkSYvAH3yAw93dqdlto47G9A35xHv4Oa";
+					var timestamp=(new Date()).getTime();
+					var key = "76b08aedcfa7d7239fdabb01";
+					var signature=md5(`appkey=${appkey}&timestamp=${timestamp}&random_str=${random_str}&key=${key}`);
+				
+					JIM.init({
+							  "appkey"    : appkey,
+							  "random_str": random_str,
+							  "signature" : signature,
+							  "timestamp" : timestamp,
+							  "flag":1
+					}).onSuccess(function(data) {	
+						uni.hideLoading()
+						_this.login(value.username,value.password);
+					}).onFail(function(data) {
+						uni.hideLoading()
+						uni.showToast({
+							"title":getCodeMsg(data.code),
+							"position":"bottom"
+						})	    
+					});
+				}else{//初始化了
+					if(!JIM.isLogin()){  //没有登录
+						_this.login(value.username,value.password);
+					}else{
+						JIM.getConversation().onSuccess(function(data) {
+							_this.list=data.conversations.reverse();
+							var len=_this.list.length;
+						}).onFail(function(data) {
+							console.log(data)
+						   //data.code 返回码
+						   //data.message 描述
+						});
+					}
+				}
+				
+			}else{
+				uni.reLaunch({
+					url: '../../login/login',
+				});
+			}
+		},
+		methods: {
+			login(username,password){
+				uni.showLoading({
+					"title":"获取会话列表中"
+				})
+				JIM.login({
+					'username' :username,
+					'password':password
+				}).onSuccess(function(data) {		
+					JIM.onMsgReceive( async function(data) {
+						console.log(data)
+						for(var i=0;i<data.messages.length;i++){//遍历消息列表
+							var noDisturb = false;
+							var content = data.messages[i].content;
+							var latest_msg,list,username
+
+							username = data.messages[i].from_username;	//来者用户名
+							list = uni.getStorageSync(_this.myUsername+username)||[];	//获取该用户的聊天记录缓存	
+							noDisturb=uni.getStorageSync("noDisturb"+_this.myUsername+username)||false;
+							
+							// 分类型进行判断
+							if(content.msg_type=="text"){
+								latest_msg = content.msg_body.text;
+							}
+							if(content.msg_type=="image"){
+								latest_msg = "[图片]"
+							}
+							if(content.msg_type=="file"){
+								if(content.msg_body.extras.isAudio){
+									latest_msg = "[语音]"
+								}
+							}
+							if(content.msg_type=="location"){
+								latest_msg = "[位置]"+content.msg_body.extras.title
+							}
+							console.log(JSON.stringify(content))
+							
+							//如果是文字 直接push
+							if(content.msg_type=="text"||content.msg_type=="location"){		
+								list.push(content);
+								uni.setStorageSync(_this.myUsername+username,list);	
+			
+								if(!noDisturb){
+									//消息来了响铃
+									var music = null;
+									music = uni.createInnerAudioContext(); //创建播放器对象
+									music.src= "/static/audio/message.mp3"; //选择播放的音频
+									music.play(); //执行播放
+									//消息来了震动
+									uni.vibrateLong({
+										success: function () {
+											console.log('success');
+										}
+									});
+								}	
+							}else{//否则，需要查询资源url并进行替换
+								_this.setPic(content.msg_body.media_id,username,content,list,true,noDisturb)
+							}	
+							
+							JIM.updateConversation({
+							 'username' : username,
+							 'extras' : {'latest_msg':latest_msg}
+							});	
+						}
+						JIM.getConversation().onSuccess(function(data) {
+							_this.list=data.conversations.reverse();
+							var len=_this.list.length;
+						}).onFail(function(data) {
+							console.log(data)
+						   //data.code 返回码
+						   //data.message 描述
+						});
+						uni.$emit('get_chat_msg',{})//通知单聊页面刷新获取数据	
+						uni.showTabBarRedDot({
+							index:1
+						});
+					});
+				
+					JIM.onSyncConversation(async function(data) { //离线消息同步监听
+						console.log("===============离线================")
+						for(var i=0;i<data.length;i++){
+							var last_content= data[i].msgs[data[i].msgs.length-1].content;
+
+							var username = data[i].from_username
+							var list = uni.getStorageSync(_this.myUsername+username)||[];//获取该对象的聊天记录
+							
+							// 分类型进行判断
+							if(last_content.msg_type=="text"){
+								latest_msg = last_content.msg_body.text;
+							}
+							if(last_content.msg_type=="image"){
+								latest_msg = "[图片]"
+							}
+							if(last_content.msg_type=="file"){
+								if(last_content.msg_body.extras.isAudio){
+									latest_msg = "[语音]"
+								}
+							}
+							if(last_content.msg_type=="location"){
+								latest_msg = "[位置]"+last_content.msg_body.extras.title
+							}
+							
+							//遍历该用户的消息
+							for(var j=0;j<data[i].msgs.length;j++){
+								var content = data[i].msgs[j].content;
+								if(content.from_id==uni.getStorageSync("userData").username){
+									continue;
+								}
+								if(content.msg_type=="text"||content.msg_type=="location"){//如果是文字或者位置直接push
+									
+									list.push(content);
+									uni.setStorageSync(_this.myUsername+username,list);	
+								
+								}else{//或者还要获取资源url进行替换
+									_this.setPic(content.msg_body.media_id,username,content,list,false,false)
+								}
+							}	
+							JIM.updateConversation({
+							 'username' : username,
+							 'extras' : {'del':false}
+							});	
+						}
+						JIM.getConversation().onSuccess(function(data) {
+							_this.list=data.conversations.reverse();
+							var len=_this.list.length;
+						}).onFail(function(data) {
+							console.log(data)
+						   //data.code 返回码
+						   //data.message 描述
+						});
+						uni.showTabBarRedDot({
+							index:1
+						});
+					});
+					JIM.getConversation().onSuccess(function(data) {
+						_this.list=data.conversations.reverse();
+						var len=_this.list.length;
+					}).onFail(function(data) {
+						console.log(data)
+					   //data.code 返回码
+					   //data.message 描述
+					});
+					uni.hideLoading()
+				}).onFail(function(data) {
+					 // console.log('error:' + JSON.stringify(data));
+					 uni.hideLoading()
+					 uni.showToast({
+						icon: 'none',
+						position: 'bottom',
+						title: getCodeMsg(data.code)
+					 });					 
+				}).onTimeout(function(data) {
+					uni.hideLoading()
+					uni.showToast({
+						icon: 'none',
+						position: 'bottom',
+						title: '登录超时！'
+					});					
+				});	
+			},
+			setPic(media_id,username,content,list,isOnline,noDisturb){
+				console.log(media_id)
+				JIM.getResource({
+					'media_id' : media_id,
+				}).onSuccess(function(data) {
+					uni.downloadFile({
+						url: data.url,
+						success: (res) => {
+							if (res.statusCode === 200) {	
+								uni.saveFile({
+									tempFilePath: res.tempFilePath,
+									success: function (res) {
+										content.msg_body.media_id=res.savedFilePath;
+
+										list.push(content);
+										
+										uni.setStorageSync(_this.myUsername+username,list);	
+										uni.$emit('get_chat_msg',{})//通知单聊页面刷新获取数据
+										if(!noDisturb&&isOnline){
+											//消息来了响铃
+											var music = null;
+											music = uni.createInnerAudioContext(); //创建播放器对象
+											music.src= "/static/audio/message.mp3"; //选择播放的音频
+											music.play(); //执行播放
+											//消息来了震动
+											uni.vibrateLong({
+											    success: function () {
+											        console.log('success');
+											    }
+											});
+										}							
+									}
+								});
+							}
+						}
+					});	
+				}).onFail(function(data) {
+					uni.showToast({
+						"title":getCodeMsg(data.code),
+						"position":"bottom",
+						"icon":"none"
+					})
+					
+				});	
+			},
+			long({x,y,index}){
+				// 初始化 索引
+				this.propIndex = index
+				// 拿到当前对象
+				let item = this.list[index]
+				
+				var isTop = uni.getStorageSync("isTop"+_this.myUsername+item.username)||false;
+				// 判断之前是否处于置顶状态
+				this.menus[0].name = isTop ? '取消置顶' : '设为置顶'
+				
+				this.$refs.extend.show(x,y)
+			},
+			// 分发菜单事件
+			clickEvent(event){
+				switch (event){
+					case "setTop": // 置顶/取消置顶会话
+					this.setTop()
+						break;
+					case "delChat": // 删除当前会话
+					this.delChat()
+						break;
+				}
+				this.$refs.extend.hide()
+			},
+			// 删除当前会话
+			delChat(){
+				let item = this.list[this.propIndex]
+				this.list.splice(this.propIndex,1)
+				JIM.updateConversation({
+				   'username' : item.username,
+				   'extras' : {'del':true}
+				});
+			},
+			// 置顶/取消置顶会话
+			setTop(){
+				let item = this.list[this.propIndex]
+				var isTop = uni.getStorageSync("isTop"+_this.myUsername+item.username)||false;
+				uni.setStorageSync("isTop"+_this.myUsername+item.username,!isTop);
+				//获取会话列表
+				JIM.getConversation().onSuccess(function(data) {
+					// console.log('success:Conversation222222===========' + JSON.stringify(data));
+					_this.list=data.conversations.reverse();
+					var len=_this.list.length;
+				}).onFail(function(data) {
+					uni.showToast({
+						"title":getCodeMsg(data.code),
+						"position":"bottom",
+					})
+				});
+			}
+		}
+	}
+</script>
+
+<style>
+.content {
+	text-align: center;
+	height: 400upx;
+	margin-top: 200upx;
+}
+</style>
